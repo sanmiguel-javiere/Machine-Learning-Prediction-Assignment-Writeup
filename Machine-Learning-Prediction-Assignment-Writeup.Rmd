@@ -1,0 +1,177 @@
+---
+title: "Machine Learnign Final Project"
+author: "Javier E. Sanmiguel"
+date: "1/28/2021"
+output: html_document
+---
+
+```{r global-options, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE)
+library(ggplot2); library(gridExtra); library(caret); library(gbm); library(dplyr)
+library(knitr); library(rpart); library(rpart.plot); library(rattle)
+library(randomForest); library(corrplot); library(elasticnet); library(pgmm)
+```
+
+## Introudction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways, exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).  Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes. 
+More details can be found in the paper "Qualitative Activity Recognition of Weight Lifting Exercises" written by Eduardo Velloso et. al., which can be found at this site: <http://web.archive.org/web/20170519033209/http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf>
+
+Data to conduct this analysis is found in these sites. The training data for this project are available here:
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv>
+
+The test data are available here:
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv>
+
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
+
+## Methodology
+
+The following steps were followed in order to determine what is the best way to predict "classe" on function of the data acquired through devices located on different parts of the participant bodies.
+
+1. Download, and read the data
+2. Inspect the data
+3. Clean the data by removing variables (columns) that don't have values/NA, or great majority are zeros)
+4. Analyze the train set by creating models using different techniques such as "Predicting with Trees", "Random Forest", "Boosting", "Linear Discriminant Analysis", and finally "Combining Predictors"
+5  A summary of the results will be provided and a recommendation on what is the most applicable technique to predict "classe"
+
+## Downloading, reading and saving data sets
+
+Use the above links to download, read and save the data sets.
+
+```{r download and read data}
+traindataURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(traindataURL, destfile = "./pml-training.csv")
+pmlTrainData <- read.csv("./pml-training.csv")
+
+testdataURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(testdataURL, destfile = "./pml-testing.csv")
+pmlTestData <- read.csv("./pml-testing.csv")
+```
+
+
+## Data inspection and cleaning
+
+The data set will be inspected and all the variables without values, zeros, and/or NA will be remove. Them the training set will be split in training set and validation set.  The test set will be used to confirm the accuracy of the model.
+
+```{r clean data sets}
+dim(pmlTrainData)
+str(pmlTrainData)
+
+# Remove all the variable with zeros, NA out of the train set
+# Here we get the indexes of the columns having at least 90% of NA or blank values 
+indColToRemoveTrain <- which(colSums(is.na(pmlTrainData) |pmlTrainData=="")>0.9*dim(pmlTrainData)[1]) 
+pmlTrainDataClean <- pmlTrainData[,-indColToRemoveTrain]
+pmlTrainDataClean <- pmlTrainDataClean[,-c(1:7)]
+
+dim(pmlTrainDataClean)
+
+# The same protocol will be done in test data set
+indColToRemoveTest <- which(colSums(is.na(pmlTestData) |pmlTestData=="")>0.9*dim(pmlTestData)[1]) 
+pmlTestDataClean <- pmlTestData[,-indColToRemoveTest]
+pmlTestDataClean <- pmlTestDataClean[,-c(1:7)]
+
+dim(pmlTestDataClean)
+```
+
+## Setting up Training, Validation and Test sets
+
+The train data set will be split in training set (75%) and Validation set (25%).  The test set will not be changed.
+
+```{r setting data sets}
+set.seed(20210129)
+inTrain <- createDataPartition(pmlTrainDataClean$classe, p=3/4)[[1]]
+pmlTraining <- pmlTrainDataClean[inTrain, ]
+pmlValidation <- pmlTrainDataClean[-inTrain, ]
+pmlTesting <- pmlTestDataClean
+dim(pmlTraining)
+dim(pmlValidation)
+dim(pmlTesting)
+```
+
+## Modeling 
+
+### Set up processing
+```{r processing}
+
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+fitControl <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
+```
+
+### Predicting with Recursive Partitioning (Trees)
+
+```{r rpart model}
+pmlModelrp <- train(classe~., data = pmlTraining, method="rpart", preProcess = "pca", na.action = na.omit, trControl = fitControl)
+pmlValrp <- predict(pmlModelrp, newdata=pmlValidation)
+pmllevels <- levels(factor(pmlValidation$classe))
+rpAccuracy <- confusionMatrix(factor(pmlValrp, levels = pmllevels),factor(pmlValidation$classe, levels = pmllevels))$overall['Accuracy']
+fancyRpartPlot(pmlModelrp$finalModel)
+```
+
+### Predicitng with Random Forests
+
+```{r rf model}
+pmlModelrf <- train(classe~., data = pmlTraining, method="rf", preProcess = "pca", na.action = na.omit, trControl = fitControl)
+pmlValrf <- predict(pmlModelrf, newdata=pmlValidation)
+rfAccuracy <- confusionMatrix(factor(pmlValrf, levels = pmllevels),factor(pmlValidation$classe, levels = pmllevels))$overall['Accuracy']
+
+```
+
+### Prediction with GBM (Gradient Boosting Machine) (Boosting with Trees)
+
+```{r gbm model}
+pmlModelgbm <- train(classe~., data = pmlTraining, method="gbm", preProcess = "pca", na.action = na.omit, trControl = fitControl)
+pmlValgbm <- predict(pmlModelgbm, newdata=pmlValidation)
+gbmAccuracy <- confusionMatrix(factor(pmlValgbm, levels = pmllevels),factor(pmlValidation$classe, levels = pmllevels))$overall['Accuracy']
+
+
+```
+
+### Prediction with Linear Discriminate Analysis
+```{r lda model}
+pmlModellda <- train(classe~., data = pmlTraining, method="lda", preProcess = "pca", na.action = na.omit, trControl = fitControl)
+pmlVallda <- predict(pmlModellda, newdata=pmlValidation)
+ldaAccuracy <- confusionMatrix(factor(pmlVallda, levels = pmllevels),factor(pmlValidation$classe, levels = pmllevels))$overall['Accuracy']
+
+```
+
+
+### Prediction with Naive Bayes
+```{r nb model}
+pmlModelnb <- train(classe~., data = pmlTraining, method="nb", preProcess = "pca", na.action = na.omit, trControl = fitControl)
+pmlValnb <- predict(pmlModelnb, newdata=pmlValidation)
+nbAccuracy <- confusionMatrix(factor(pmlValnb, levels = pmllevels),factor(pmlValidation$classe, levels = pmllevels))$overall['Accuracy']
+
+```
+
+
+# Results
+
+The below table summarizes the results of running 5 different techniques to predict "classe".  Random Forest and Boosting with Trees offered the highest accuracy; where **`r rfAccuracy`**, **`r gbmAccuracy`** are their accuracies respectably. Trees has highest accuracy, but it could be over fitting,  therefore, it was selected Boosting with Trees to be used with test data set.
+
+```{r results}
+results <- matrix(c(rpAccuracy, rfAccuracy, gbmAccuracy, ldaAccuracy, nbAccuracy), nrow=5, ncol=1)
+row.names(results) <- c("Trees", "Random Forests", "Boosting with Trees", "Linear Discriminate Analysis", "Naive Bayes")
+resultstable <- as.table(results)
+colnames(resultstable)<-c("Accuracy")
+resultstable
+
+```
+
+# Using Model with Test Dataset
+The below table summarizes the predictions for each "problem ID" in the test data set
+
+```{r test}
+testresults <- predict(pmlModelgbm, newdata=pmlTesting)
+problemID <- as.data.frame(t(pmlTesting["problem_id"]))
+testresultstable <- rbind(problemID, as.character(testresults) )
+row.names(testresultstable)<-c("problem_ID", "Class")
+unname(testresultstable)
+
+
+```
